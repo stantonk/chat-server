@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/labstack/gommon/log"
-	"time"
 	"net"
 	"fmt"
 )
@@ -30,7 +29,6 @@ func handleConnection(conn net.Conn) {
 	//TODO: hmm, what's difference between new([]byte) and make([]byte, SIZE)?
 	var buf = make([]byte, 1024)
 	for {
-		time.Sleep(1e9)
 		// https://stackoverflow.com/questions/34717331/why-does-conn-read-write-nothing-into-a-byte-but-bufio-reader-readstring
 		if nb, err := conn.Read(buf); err != nil {
 			log.Warn("error:", err)
