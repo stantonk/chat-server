@@ -11,28 +11,36 @@ import (
 func main() {
 	log.EnableColor()
 	transmit := make(chan string, 10)
-	receive := make(chan string, 10)
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		// handle error
 	}
 	log.Info("Server started on", ln.Addr())
 
-	go router(transmit, receive)
+	clientReceiveChannels := make([]chan<- string, 0)
+	clientReceiveChannelsRef := &clientReceiveChannels
+	go router(transmit, clientReceiveChannelsRef)
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			// handle error
 		}
-		go handleConnection(conn, transmit, receive)
+		newClientReceiveChannel := make(chan string, 10)
+		clientReceiveChannels = append(clientReceiveChannels, newClientReceiveChannel)
+		clientReceiveChannelsRef = &clientReceiveChannels
+		go handleConnection(conn, transmit, newClientReceiveChannel)
 	}
 }
 
-func router(fromClients <-chan string, toClients chan<- string) {
+func router(fromClients <-chan string, toClients *[]chan<- string) {
 	for {
 		msg := <-fromClients
-		toClients <- msg
+		log.Info("got message from a client:", msg)
+		for i:=0; i < len(*toClients); i++ {
+			log.Infof("sending %s to client %d", msg, i)
+			(*toClients)[i] <- msg
+		}
 	}
 }
 
@@ -64,7 +72,7 @@ func handleConnection(conn net.Conn, transmit chan<- string, receive <-chan stri
 						break
 					}
 				case <-time.After(time.Second):
-					log.Info("timedout")
+					//log.Info("timedout")
 				}
 			} else {
 				log.Error(err)
