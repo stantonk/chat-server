@@ -5,9 +5,10 @@ import (
 	"net"
 	"fmt"
 	"time"
+	"os"
 )
 
-// Programming challenge: implement an echo server
+// implement a chat server
 func main() {
 	log.EnableColor()
 	transmit := make(chan string, 10)
@@ -24,7 +25,8 @@ func main() {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			// handle error
+			fmt.Println("error starting: ", err)
+			os.Exit(1)
 		}
 		newClientReceiveChannel := make(chan string, 10)
 		clientReceiveChannels = append(clientReceiveChannels, newClientReceiveChannel)
@@ -68,7 +70,7 @@ func handleConnection(conn net.Conn, transmit chan<- string, receive <-chan stri
 					if _, err := conn.Write([]byte(msg)); err != nil {
 						log.Error("unable to write data back to client: ", err)
 						// probably dead connection?
-						transmit <- fmt.Sprintf("%s disconnected", conn.RemoteAddr())
+						transmit <- fmt.Sprintf("%s disconnected\n", conn.RemoteAddr())
 						break
 					}
 				case <-time.After(time.Second):
@@ -77,7 +79,7 @@ func handleConnection(conn net.Conn, transmit chan<- string, receive <-chan stri
 			} else {
 				log.Error(err)
 				// TODO...could be connection closed, or something else...
-				transmit <- fmt.Sprintf("%s disconnected", conn.RemoteAddr())
+				transmit <- fmt.Sprintf("%s disconnected\n", conn.RemoteAddr())
 				break
 			}
 		} else {
