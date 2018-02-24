@@ -4,7 +4,6 @@ import (
 	"github.com/labstack/gommon/log"
 	"net"
 	"fmt"
-	"time"
 	"os"
 )
 
@@ -25,7 +24,8 @@ func main() {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			fmt.Println("error starting: ", err)
+			fmt.Println("error accepting: ", err)
+			//todo: probably dont want to exit here... :)
 			os.Exit(1)
 		}
 		newClientReceiveChannel := make(chan string, 10)
@@ -39,7 +39,7 @@ func router(fromClients <-chan string, toClients *[]chan<- string) {
 	for {
 		msg := <-fromClients
 		log.Info("got message from a client:", msg)
-		for i:=0; i < len(*toClients); i++ {
+		for i := 0; i < len(*toClients); i++ {
 			log.Infof("sending %s to client %d", msg, i)
 			(*toClients)[i] <- msg
 		}
@@ -52,43 +52,60 @@ func handleConnection(conn net.Conn, transmit chan<- string, receive <-chan stri
 	//var buf = new([]byte)
 	//TODO: hmm, what's difference between new([]byte) and make([]byte, SIZE)?
 
-	var buf = make([]byte, 1024)
 	var msg string
+	var incoming ReadResult
+	readChan := make(chan ReadResult, 10)
+	defer close(readChan)
+	go readToChan(conn, readChan)
 	for {
 
 		// https://stackoverflow.com/questions/34717331/why-does-conn-read-write-nothing-into-a-byte-but-bufio-reader-readstring
-		conn.SetReadDeadline(time.Now().Add(time.Second*1))
-		conn.SetWriteDeadline(time.Now().Add(time.Second*5))
-
-		if nb, err := conn.Read(buf); err != nil {
-			if err, ok := err.(net.Error); ok && err.Timeout() {
-				// if we timeout for the client to send, lets check if we got anything
-				// from any other clients
-				select {
-				case msg = <-receive:
-					log.Info("got:", msg)
-					if _, err := conn.Write([]byte(msg)); err != nil {
-						log.Error("unable to write data back to client: ", err)
-						// probably dead connection?
-						transmit <- fmt.Sprintf("%s disconnected\n", conn.RemoteAddr())
-						break
-					}
-				case <-time.After(time.Second):
-					//log.Info("timedout")
-				}
-			} else {
-				log.Error(err)
+		select {
+		case incoming = <-readChan:
+			// handle stuff received from the connected client
+			if incoming.Err != nil {
+				log.Error(incoming.Err)
 				// TODO...could be connection closed, or something else...
 				transmit <- fmt.Sprintf("%s disconnected\n", conn.RemoteAddr())
-				break
+				return
 			}
-		} else {
-			msg = string(buf[:nb])
-			log.Info(msg)
-			// echo it back
+			msg = string(incoming.Data)
+			log.Info("received: ", msg)
+			// echo it back to all clients
 			response := fmt.Sprintf("%s: %s", conn.RemoteAddr(), msg)
 			transmit <- response
+
+		case msg = <-receive:
+			// write received stuff from other clients to *this* client
+			log.Info("got:", msg)
+			if _, err := conn.Write([]byte(msg)); err != nil {
+				// probably dead connection?
+				log.Info(conn.RemoteAddr(), "is dead, sending disconnection message")
+				transmit <- fmt.Sprintf("%s disconnected\n", conn.RemoteAddr())
+				return
+			}
 		}
 	}
-	log.Info("Done handling connection for ", conn.RemoteAddr())
+}
+
+type ReadResult struct {
+	Data []byte
+	Err  error
+}
+
+func readToChan(conn net.Conn, rx chan<- ReadResult) {
+	buf := make([]byte, 1024)
+
+	for {
+		log.Info("read loop for", conn.RemoteAddr())
+		if nb, err := conn.Read(buf); err != nil {
+			rx <- ReadResult{Err: err}
+			break
+		} else {
+			tmp := make([]byte, nb)
+			copy(tmp, buf[:nb])
+			rx <- ReadResult{Data: tmp, Err: nil}
+		}
+	}
+	log.Warn("read loop EXITED for ", conn.RemoteAddr())
 }
