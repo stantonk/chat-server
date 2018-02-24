@@ -7,7 +7,7 @@ I'm certain this is not idiomatic go, but someday it will be. I'm also certain
 this is suboptimal and buggy as hell, but I'm going for trial-by-fire learning
 here. Someday I'll turn this into a blog post...
 
-To use
+to use
 ======
 
 Build the server and start it

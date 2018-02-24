@@ -35,6 +35,7 @@ func main() {
 	}
 }
 
+//TODO: need to reap disconnected clients from toClients or else we will eventually deadlock
 func router(fromClients <-chan string, toClients *[]chan<- string) {
 	for {
 		msg := <-fromClients
