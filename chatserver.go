@@ -5,6 +5,8 @@ import (
 	"github.com/labstack/gommon/log"
 	"github.com/satori/go.uuid"
 	"net"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -23,29 +25,38 @@ type ClientSession struct {
 
 // implement a chat server
 func main() {
-	log.EnableColor()
-	fromClients := make(chan string, 10)
+	//log.EnableColor()
+
+	// startup
 	ln, err := net.Listen("tcp", ":8080")
 	if err != nil {
-		// handle error...?
-		log.Errorf("rut roh: %v", err)
+		fmt.Printf("failed to start server: %v", err)
+		os.Exit(1)
 	}
 	log.Info("Server started on", ln.Addr())
 
+	// channel to share received messages from clients to all other clients
+	fromClients := make(chan string, 10)
+	// session management
 	clientSessions := make(map[uuid.UUID]*ClientSession, 0)
-	go router(fromClients, clientSessions)
+	go sessionManager(fromClients, clientSessions)
 
 	// monitor connected clients periodically for debugging
 	go func(clientSessions map[uuid.UUID]*ClientSession) {
 		for {
-			log.Info("connected clients:", len(clientSessions))
-			for id, session := range clientSessions {
-				log.Infof("%s: %+v", id, session)
+			b := strings.Builder{}
+			fmt.Fprintf(&b, "connected clients: %v", len(clientSessions))
+			for _, session := range clientSessions {
+				fmt.Fprintf(&b, "\n%+v", session)
 			}
+			log.Info(b.String())
+			b.Reset()
 			time.Sleep(time.Second * 5)
 		}
 	}(clientSessions)
 
+	// handle incoming connections from clients and
+	// create a new session and goroutine for each
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -60,35 +71,42 @@ func main() {
 			Transmit: fromClients,
 			State:    Connected}
 		clientSessions[id] = &newClientSession
-		go handleConnection(&newClientSession)
+		go clientHandler(&newClientSession)
 	}
 }
 
-func router(fromClients <-chan string, clientSessions map[uuid.UUID]*ClientSession) {
+// manages client sessions:
+// - routing messages between clients
+// - reaping disconnected clients
+func sessionManager(fromClients <-chan string, clientSessions map[uuid.UUID]*ClientSession) {
 	for {
 		msg := <-fromClients
 		log.Info("got message from a client:", msg)
+
 		for id, session := range clientSessions {
-			log.Infof("router: handling %s: %+v", id, session)
+			log.Infof("sessionManager: handling %+v", session)
 			if session.State == Disconnected {
 				// reap sessions of disconnected clients to stop
 				// trying to send to them. otherwise will eventually
 				// deadlock when the session.Receive channel fills up
-				log.Infof("%s: %+v is Disconnected, reaping", id, session)
+				log.Infof("%+v is Disconnected, reaping", session)
 				delete(clientSessions, id)
 			} else {
-				log.Infof("sending %s to client %d", msg, id)
+				log.Infof("sending %s to client %v", msg, session.Id)
 				session.Receive <- msg
 			}
 		}
 	}
 }
 
-func handleConnection(session *ClientSession) {
+// handles a single client:
+// - read data sent from client and pass to session manager for distribution
+//   to other clients
+// - write data out to client from the session manager (usually messages from
+//   other connected clients)
+func clientHandler(session *ClientSession) {
 	defer session.Conn.Close()
-	log.Info("Connection established for ", session.Conn.RemoteAddr())
-	//var buf = new([]byte)
-	//TODO: hmm, what's difference between new([]byte) and make([]byte, SIZE)?
+	log.Info("Connection established for", session.Conn.RemoteAddr())
 
 	var msg string
 	var incoming ReadResult
@@ -100,14 +118,14 @@ func handleConnection(session *ClientSession) {
 		select {
 		case incoming = <-readChan:
 			// handle stuff received from the connected client
+
 			if incoming.Err != nil {
 				log.Error(incoming.Err)
-				// TODO...could be connection closed, or something else...
-				session.Transmit <- fmt.Sprintf("%s disconnected\n", session.Conn.RemoteAddr())
 				session.State = Disconnected
-				log.Infof("should reap: %+v", session)
+				session.Transmit <- fmt.Sprintf("%s disconnected\n", session.Conn.RemoteAddr())
 				return
 			}
+
 			msg = string(incoming.Data)
 			log.Info("received: ", msg)
 			// echo it back to all clients
@@ -120,7 +138,6 @@ func handleConnection(session *ClientSession) {
 			if _, err := session.Conn.Write([]byte(msg)); err != nil {
 				// probably dead connection?
 				session.State = Disconnected
-				log.Infof("should reap: %+v", session)
 				session.Transmit <- fmt.Sprintf("%s disconnected\n", session.Conn.RemoteAddr())
 				return
 			}
@@ -133,6 +150,8 @@ type ReadResult struct {
 	Err  error
 }
 
+// abstraction over reading on net.Conn to avoid blocking
+// in the clientHandler
 func readToChan(conn net.Conn, rx chan<- ReadResult) {
 	buf := make([]byte, 1024)
 
