@@ -1,0 +1,7 @@
+TODOs
+=====
+[ ] test for memory leaks; some cursory monitoring of chatserver in top
+indicated that memory usage kept growing as more messages were sent and
+clients connected/disconnected. maybe golang's GC just doesn't run until
+it really has to?
+[ ] allow clients to set their username somehow
